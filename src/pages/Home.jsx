@@ -75,6 +75,10 @@ export default function Home() {
         if (data.success && data.assets) {
           const updatedCards = [...defaultStatCards]
           updatedCards[0].value = data.assets.total || 0  // Total Assets
+          updatedCards[1].value = data.assets.web_apps || 0 // Public Web Apps
+          updatedCards[2].value = data.assets.apis || 0     // APIs
+          updatedCards[3].value = data.assets.servers || 0  // Servers
+          updatedCards[4].value = data.findings?.expiring_certs || 0 // Expiring Certs
           updatedCards[5].value = data.findings?.by_severity?.high || 0  // High Risk
           setStatCards(updatedCards)
         }

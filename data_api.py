@@ -20,7 +20,7 @@ app.add_middleware(
 )
 
 # Data directory path
-DATA_DIR = Path(__file__).parent.parent / "public" / "data"
+DATA_DIR = Path(__file__).parent / "public" / "data"
 
 def load_json_file(filename: str):
     """Load and return JSON file from data directory."""
@@ -110,6 +110,83 @@ async def get_business_impact():
         return {"records": data if isinstance(data, list) else [data]}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/statistics")
+async def get_statistics():
+    """Get statistics for the home page dashboard."""
+    try:
+        total_assets = 0
+        web_apps = 0
+        apis = 0
+        servers = 0
+        expiring_certs = 0
+        
+        try:
+            cbom_data = load_json_file("pnb/cbom.json")
+            records = cbom_data.get("records", []) if isinstance(cbom_data, dict) else cbom_data
+            total_assets = len(records)
+            
+            from datetime import datetime, timezone
+            now_utc = datetime.now(timezone.utc)
+            
+            for r in records:
+                asset_name = r.get("Asset", "") or ""
+                asset_name = asset_name.lower()
+                port = r.get("Port")
+                
+                # Asset classification
+                if "api" in asset_name:
+                    apis += 1
+                elif port in [80, 443, 8080, 8443]:
+                    web_apps += 1
+                else:
+                    servers += 1
+                    
+                # Expiring Certs
+                cert_validity = r.get("Certificate Validity (Not Before/After)", {})
+                not_after_str = cert_validity.get("Not After")
+                if not_after_str:
+                    try:
+                        if not_after_str.endswith("Z"):
+                            not_after_str = not_after_str[:-1] + "+00:00"
+                        not_after = datetime.fromisoformat(not_after_str)
+                        if not_after.tzinfo is None:
+                            not_after = not_after.replace(tzinfo=timezone.utc)
+                        days_left = (not_after - now_utc).days
+                        if 0 <= days_left <= 30:
+                            expiring_certs += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+            
+        try:
+            try:
+                shadow_crypto = load_json_file("pnb/shadow-crypto.json")
+            except HTTPException:
+                shadow_crypto = load_json_file("risk/shadow-crypto.json")
+        except Exception:
+            shadow_crypto = {"severity_summary": {"high": 0}}
+            
+        high_risk = shadow_crypto.get("severity_summary", {}).get("high", 0)
+
+        return {
+            "success": True,
+            "assets": {
+                "total": total_assets,
+                "web_apps": web_apps,
+                "apis": apis,
+                "servers": servers
+            },
+            "findings": {
+                "expiring_certs": expiring_certs,
+                "by_severity": {
+                    "high": high_risk
+                }
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
