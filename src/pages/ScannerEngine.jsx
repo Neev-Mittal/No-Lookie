@@ -1,0 +1,650 @@
+import { useState, useEffect, useRef } from 'react'
+import { Radar, Plus, X, Play, Download, CheckCircle, AlertCircle, XCircle } from 'lucide-react'
+
+// ─── SSE-based real scanner (replaces MOCK_RESULTS + LOG_MESSAGES) ────────────
+
+const SCAN_PHASES = [
+  { label: 'Resolving DNS',        pct: 15,  color: '#3b82f6' },
+  { label: 'Enumerating Assets',   pct: 35,  color: '#7c3aed' },
+  { label: 'TLS Handshake Probes', pct: 70,  color: '#d97706' },
+  { label: 'Cert Extraction',      pct: 88,  color: '#f59e0b' },
+  { label: 'Writing CBOM',         pct: 100, color: '#16a34a' },
+]
+
+function tlsColor(v) {
+  if (!v) return 'text-gray-400'
+  if (v === 'TLSv1.3') return 'text-green-600'
+  if (v === 'TLSv1.2') return 'text-blue-600'
+  if (v === 'TLSv1.1') return 'text-orange-500'
+  return 'text-red-600'
+}
+
+function keyColor(bits) {
+  if (!bits) return 'text-gray-400'
+  if (bits >= 4096) return 'text-green-600'
+  if (bits >= 2048) return 'text-blue-600'
+  if (bits >= 1024) return 'text-orange-500'
+  return 'text-red-600'
+}
+
+function parsePorts(str) {
+  return str
+    .split(/[\s,]+/)
+    .map(p => parseInt(p, 10))
+    .filter(p => !isNaN(p) && p > 0 && p <= 65535)
+}
+
+export default function ScannerEngine() {
+  const [targets,      setTargets]      = useState(['pnb.bank.in'])
+  const [newTarget,    setNewTarget]    = useState('')
+  const [ports,        setPorts]        = useState('443, 8443')
+  const [doEnum,       setDoEnum]       = useState(false)
+  const [tlsTimeout,   setTlsTimeout]   = useState(6)
+  const [resolveTO,    setResolveTO]    = useState(5)
+  const [enumTO,       setEnumTO]       = useState(900)
+  const [scanning,     setScanning]     = useState(false)
+  const [phase,        setPhase]        = useState(-1)
+  const [progress,     setProgress]     = useState(0)
+  const [logs,         setLogs]         = useState([])
+  const [results,      setResults]      = useState(null)
+  const [selectedRow,  setSelectedRow]  = useState(null)
+  const [activeTab,    setActiveTab]    = useState('cbom')
+  const [apiError,     setApiError]     = useState(null)
+  const logRef = useRef(null)
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [logs])
+
+  function addTarget() {
+    const t = newTarget.trim()
+    if (t && !targets.includes(t)) setTargets(prev => [...prev, t])
+    setNewTarget('')
+  }
+
+  function removeTarget(t) { setTargets(prev => prev.filter(x => x !== t)) }
+
+  function appendLog(level, message) {
+    const tag = `[${level.toUpperCase()}]`.padEnd(8)
+    setLogs(prev => [...prev, `${tag} ${message}`])
+  }
+
+  async function runScan() {
+    if (scanning || targets.length === 0) return
+
+    setScanning(true)
+    setResults(null)
+    setSelectedRow(null)
+    setLogs([])
+    setProgress(0)
+    setPhase(0)
+    setApiError(null)
+
+    const portList = parsePorts(ports)
+    const body = JSON.stringify({
+      targets,
+      ports:                portList.length ? portList : [443],
+      tls_timeout:          tlsTimeout,
+      resolve_timeout:      resolveTO,
+      enumerate_subdomains: doEnum,
+    })
+
+    let response
+    try {
+      response = await fetch('/api/scan/stream', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      })
+    } catch (err) {
+      setApiError(`Cannot reach backend: ${err.message}. Make sure scanner_api.py is running on port 8000.`)
+      setScanning(false)
+      return
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => response.statusText)
+      setApiError(`Backend error ${response.status}: ${text}`)
+      setScanning(false)
+      return
+    }
+
+    const reader    = response.body.getReader()
+    const decoder   = new TextDecoder()
+    let   buffer    = ''
+    const collected = []
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const messages = buffer.split('\n\n')
+        buffer = messages.pop()
+
+        for (const msg of messages) {
+          if (!msg.trim()) continue
+          let eventType = 'message'
+          let dataStr   = ''
+
+          for (const line of msg.split('\n')) {
+            if (line.startsWith('event:')) eventType = line.slice(6).trim()
+            if (line.startsWith('data:'))  dataStr   = line.slice(5).trim()
+          }
+
+          if (!dataStr) continue
+          let payload
+          try { payload = JSON.parse(dataStr) } catch { continue }
+
+          if (eventType === 'log') {
+            appendLog(payload.level, payload.message)
+          } else if (eventType === 'progress') {
+            setPhase(payload.phase)
+            setProgress(payload.pct)
+          } else if (eventType === 'result') {
+            collected.push(payload)
+          } else if (eventType === 'done') {
+            setResults(collected.length ? collected : payload.cbom)
+            setProgress(100)
+            setPhase(-1)
+          } else if (eventType === 'error') {
+            setApiError(payload.message)
+          }
+        }
+      }
+    } catch (err) {
+      if (!apiError) setApiError(`Stream error: ${err.message}`)
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  function downloadCBOM() {
+    if (!results) return
+    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = 'cbom.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const subdomainData = results
+    ? results.map(r => ({
+        fqdn:    r['Asset'],
+        ips:     r['IP Address'] ? [r['IP Address']] : [],
+        sources: ['direct-input'],
+        type:    'domain',
+        status:  r['Scan Status'] === 'ok' ? 'resolved' : 'error',
+      }))
+    : []
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-display text-xl font-bold text-pnb-crimson flex items-center gap-2">
+            <Radar size={20} className="text-amber-500" /> QRIE Scanner Engine
+          </h1>
+          <p className="font-body text-sm text-gray-600 mt-0.5">
+            TLS probing · Subdomain enumeration · CBOM generation
+          </p>
+        </div>
+        {results && (
+          <button
+            onClick={downloadCBOM}
+            className="flex items-center gap-1.5 bg-green-600 text-white font-display text-xs font-bold
+                       px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+            <Download size={13} /> Export cbom.json
+          </button>
+        )}
+      </div>
+
+      {/* API error banner */}
+      {apiError && (
+        <div className="bg-red-50 border border-red-300 rounded-xl px-4 py-3 flex items-start gap-3">
+          <XCircle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="font-display text-xs font-bold text-red-700">Scanner Backend Error</p>
+            <p className="font-body text-xs text-red-600 mt-0.5">{apiError}</p>
+          </div>
+          <button onClick={() => setApiError(null)} className="ml-auto text-red-400 hover:text-red-600">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-12 gap-4">
+
+        {/* ── CONFIG PANEL ──────────────────────────────────────── */}
+        <div className="col-span-4 space-y-3">
+          <div className="glass-card rounded-xl p-4 space-y-4">
+            <h3 className="font-display text-xs font-semibold text-pnb-crimson uppercase tracking-wide">
+              Scan Configuration
+            </h3>
+
+            {/* Target list */}
+            <div>
+              <label className="font-display text-xs font-semibold text-gray-700 uppercase tracking-wide block mb-2">
+                Targets
+              </label>
+              <div className="space-y-1.5 mb-2">
+                {targets.map(t => (
+                  <div key={t} className="flex items-center gap-2 bg-amber-50 border border-amber-200
+                                          rounded-lg px-3 py-1.5">
+                    <div className="w-1.5 h-1.5 bg-amber-500 rounded-full" />
+                    <span className="font-mono text-xs text-gray-700 flex-1">{t}</span>
+                    <button onClick={() => removeTarget(t)}
+                      className="text-gray-400 hover:text-red-500 transition-colors">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={newTarget}
+                  onChange={e => setNewTarget(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addTarget()}
+                  placeholder="domain.com or IP"
+                  className="flex-1 border border-amber-200 rounded-lg px-3 py-1.5 text-xs font-mono
+                             focus:outline-none focus:ring-1 focus:ring-amber-400"
+                />
+                <button onClick={addTarget}
+                  className="bg-pnb-crimson text-white px-3 py-1.5 rounded-lg hover:bg-red-800 transition-colors">
+                  <Plus size={13} />
+                </button>
+              </div>
+            </div>
+
+            {/* Ports */}
+            <div>
+              <label className="font-display text-xs font-semibold text-gray-700 uppercase tracking-wide block mb-1.5">
+                Ports
+              </label>
+              <input value={ports} onChange={e => setPorts(e.target.value)}
+                className="w-full border border-amber-200 rounded-lg px-3 py-1.5 text-xs font-mono
+                           focus:outline-none focus:ring-1 focus:ring-amber-400" />
+              <p className="font-body text-xs text-gray-400 mt-1">Default: 443, 8443</p>
+            </div>
+
+            {/* Timeouts */}
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: 'TLS (s)',     val: tlsTimeout,  set: setTlsTimeout  },
+                { label: 'Resolve (s)', val: resolveTO,   set: setResolveTO   },
+                { label: 'Enum (s)',    val: enumTO,      set: setEnumTO      },
+              ].map(({ label, val, set }) => (
+                <div key={label}>
+                  <label className="font-display text-xs font-semibold text-gray-600 block mb-1">{label}</label>
+                  <input type="number" value={val} onChange={e => set(+e.target.value)}
+                    className="w-full border border-amber-200 rounded-lg px-2 py-1.5 text-xs font-mono
+                               focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                </div>
+              ))}
+            </div>
+
+            {/* Enumerate toggle */}
+            <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-xl">
+              <div>
+                <p className="font-display text-xs font-semibold text-gray-700">--enumerate</p>
+                <p className="font-body text-xs text-gray-500 mt-0.5">Subdomain enumeration via Subfinder</p>
+              </div>
+              <button onClick={() => setDoEnum(!doEnum)}
+                className={`relative w-12 h-6 rounded-full transition-colors ${doEnum ? 'bg-amber-500' : 'bg-gray-300'}`}>
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform
+                  ${doEnum ? 'translate-x-7' : 'translate-x-1'}`} />
+              </button>
+            </div>
+
+            {/* CLI preview */}
+            <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs">
+              <p className="text-amber-400 mb-1"># Generated command:</p>
+              <p className="text-green-400 break-all">python scanner.py</p>
+              <p className="text-slate-300 break-all">
+                {' '} --targets {targets.join(' ')}{'\n'}
+                {' '} --ports {ports.replace(/\s/g,'').replace(/,/g,' ')}{'\n'}
+                {' '} --tls-timeout {tlsTimeout}{'\n'}
+                {' '} --resolve-timeout {resolveTO}{'\n'}
+                {doEnum ? `  --enumerate\n` : ''}
+                {' '} --out-dir ./output
+              </p>
+            </div>
+
+            {/* Scan button */}
+            <button
+              onClick={runScan}
+              disabled={scanning || targets.length === 0}
+              className={`w-full py-3 font-display font-extrabold text-sm rounded-xl transition-all duration-300 shadow-lg
+                flex items-center justify-center gap-2
+                ${scanning
+                  ? 'bg-amber-400 text-white cursor-wait'
+                  : targets.length === 0
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-pnb-crimson to-red-800 text-white hover:from-red-800 hover:to-pnb-crimson'
+                }`}
+            >
+              {scanning
+                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Scanning...</>
+                : <><Play size={15} /> Run Scan</>
+              }
+            </button>
+          </div>
+
+          {/* Scan phase tracker */}
+          {(scanning || results) && (
+            <div className="glass-card rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-display text-xs font-semibold text-pnb-crimson uppercase tracking-wide">
+                  Scan Progress
+                </h3>
+                <span className="font-display text-sm font-extrabold text-pnb-crimson">{Math.round(progress)}%</span>
+              </div>
+              <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-4">
+                <div className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${progress}%`,
+                    background: progress < 100
+                      ? 'linear-gradient(90deg, #8B0000, #F59E0B)'
+                      : '#16a34a'
+                  }} />
+              </div>
+              {SCAN_PHASES.map((p, i) => {
+                const done    = progress >= p.pct
+                const current = phase === i && scanning
+                return (
+                  <div key={p.label} className={`flex items-center gap-2.5 mb-2 transition-all
+                    ${done ? 'opacity-100' : 'opacity-35'}`}>
+                    <div className={`relative w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0
+                      ${done ? 'bg-green-500' : current ? 'bg-amber-500' : 'bg-gray-200'}`}>
+                      {current && (
+                        <div className="absolute inset-0 rounded-full bg-amber-400 scanner-ping" />
+                      )}
+                      {done
+                        ? <CheckCircle size={12} className="text-white" />
+                        : <span className="text-white font-display text-xs font-bold">{i+1}</span>
+                      }
+                    </div>
+                    <span className={`font-body text-xs ${done ? 'text-gray-700 font-semibold' : 'text-gray-400'}`}>
+                      {p.label}
+                    </span>
+                    {done && <span className="ml-auto text-green-500 font-display text-xs font-bold">✓</span>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── RIGHT PANEL ───────────────────────────────────────── */}
+        <div className="col-span-8 space-y-3">
+
+          {/* Live log terminal */}
+          <div className="bg-slate-900 rounded-xl overflow-hidden border border-slate-700">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-red-500" />
+                <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                <div className="w-3 h-3 rounded-full bg-green-500" />
+                <span className="font-mono text-xs text-slate-400 ml-2">qrie.scanner — live output</span>
+              </div>
+              {scanning && (
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 bg-green-400 rounded-full scanner-ping" />
+                  <span className="font-mono text-xs text-green-400">SCANNING</span>
+                </div>
+              )}
+              {results && !scanning && <span className="font-mono text-xs text-green-400">✓ COMPLETE</span>}
+            </div>
+            <div ref={logRef}
+              className="p-4 h-52 overflow-y-auto font-mono text-xs space-y-0.5"
+              style={{ scrollBehavior: 'smooth' }}>
+              {logs.length === 0 && !scanning && !results && (
+                <p className="text-slate-500">$ Waiting for scan to start...</p>
+              )}
+              {logs.map((line, i) => (
+                <p key={i} className={
+                  line.includes('[ERROR]') ? 'text-red-400' :
+                  line.includes('[WARN]')  ? 'text-amber-400' :
+                  line.includes('[DEBUG]') ? 'text-slate-400' :
+                  line.includes('✅')       ? 'text-green-400 font-bold' :
+                  'text-green-300'
+                }>
+                  {line}
+                </p>
+              ))}
+              {scanning && (
+                <p className="text-amber-400 animate-pulse">▌</p>
+              )}
+            </div>
+          </div>
+
+          {/* Results tabs */}
+          {results && (
+            <div className="glass-card rounded-xl overflow-hidden">
+              <div className="flex border-b border-amber-100">
+                {[
+                  { key: 'cbom',       label: 'CBOM Records'       },
+                  { key: 'subdomains', label: 'Subdomains'         },
+                  { key: 'probes',     label: 'TLS Probe Details'  },
+                ].map(({ key, label }) => (
+                  <button key={key} onClick={() => setActiveTab(key)}
+                    className={`px-5 py-3 font-display text-xs font-semibold transition-colors
+                      ${activeTab === key
+                        ? 'bg-pnb-crimson text-white'
+                        : 'text-gray-600 hover:bg-amber-50'
+                      }`}>
+                    {label}
+                  </button>
+                ))}
+                <div className="ml-auto flex items-center px-4 gap-3">
+                  <span className="font-body text-xs text-gray-500">
+                    {results.length} records · {results.filter(r => r['Scan Status'] === 'ok').length} ok ·{' '}
+                    <span className="text-red-500">{results.filter(r => r['Scan Status'] === 'error').length} errors</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* CBOM table */}
+              {activeTab === 'cbom' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs font-body">
+                    <thead>
+                      <tr className="bg-amber-50">
+                        {['Asset','IP','Port','TLS Ver','Min TLS','Cipher Suite','Key Exch','KEA','Enc','Hash','Latency(ms)','PK Algo','Key Bits','PFS','Sig Algo','Issuer CA','PQC Label','Status'].map(h => (
+                          <th key={h} className="px-3 py-2.5 text-left font-display font-semibold text-pnb-crimson text-xs whitespace-nowrap">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map((r, i) => {
+                        const ok     = r['Scan Status'] === 'ok'
+                        const active = selectedRow === i
+                        return (
+                          <tr key={i}
+                            onClick={() => setSelectedRow(active ? null : i)}
+                            className={`border-b border-amber-50 cursor-pointer transition-colors
+                              ${active ? 'bg-amber-100/60' : i%2===0 ? 'bg-white/80 hover:bg-amber-50/50' : 'bg-red-50/10 hover:bg-amber-50/50'}`}>
+                            <td className="px-3 py-2 font-semibold text-blue-700 whitespace-nowrap">{r['Asset'].split('.')[0]}</td>
+                            <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">{r['IP Address']}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className="bg-purple-100 text-purple-700 font-mono font-bold px-1.5 py-0.5 rounded">
+                                {r['Port']}
+                              </span>
+                            </td>
+                            <td className={`px-3 py-2 font-mono font-bold whitespace-nowrap ${tlsColor(r['TLS Version'])}`}>
+                              {r['TLS Version'] || '—'}
+                            </td>
+                            <td className={`px-3 py-2 font-mono whitespace-nowrap ${tlsColor(r['Minimum Supported TLS'])}`}>
+                              {r['Minimum Supported TLS'] || '—'}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap max-w-36 truncate">
+                              {r['Cipher Suite'] ? (
+                                <span className={r['Cipher Suite'].includes('DES') || r['Cipher Suite'].includes('RC4') ? 'text-red-600 bg-red-50 px-1 rounded' : ''}>
+                                  {r['Cipher Suite']}
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r['Key Exchange Algorithm'] || '—'}</td>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r['Authentication Algorithm'] || '—'}</td>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r['Encryption Algorithm']?.slice(0,10) || '—'}</td>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r['Hash Algorithm'] || '—'}</td>
+                            <td className="px-3 py-2 text-gray-600 text-center">{r['Handshake Latency'] ?? '—'}</td>
+                            <td className="px-3 py-2 text-gray-600">{r['Public Key Algorithm'] || '—'}</td>
+                            <td className={`px-3 py-2 font-mono font-bold whitespace-nowrap ${keyColor(r['Key Size (Bits)'])}`}>
+                              {r['Key Size (Bits)'] ? `${r['Key Size (Bits)']}b` : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {r['PFS Status'] === 'Yes' ? <CheckCircle size={13} className="inline text-green-500" /> :
+                               r['PFS Status'] === 'No'  ? <XCircle size={13} className="inline text-red-500" /> :
+                               <AlertCircle size={13} className="inline text-gray-400" />}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">{r['Signature Algorithm']?.slice(0,15) || '—'}</td>
+                            <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{r['Issuer CA']?.replace('CN=','') || '—'}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {r['NIST PQC Readiness Label'] && (
+                                <span className={`text-xs font-display font-bold px-1.5 py-0.5 rounded ${
+                                  r['NIST PQC Readiness Label'] === 'PQC-Ready'           ? 'bg-green-100 text-green-700' :
+                                  r['NIST PQC Readiness Label'] === 'Migration-Candidate'  ? 'bg-blue-100 text-blue-700' :
+                                  r['NIST PQC Readiness Label'] === 'Quantum-Vulnerable'   ? 'bg-red-100 text-red-700' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {r['NIST PQC Readiness Label']}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              {ok
+                                ? <CheckCircle size={14} className="inline text-green-500" />
+                                : <XCircle size={14} className="inline text-red-500" />
+                              }
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Subdomains tab */}
+              {activeTab === 'subdomains' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs font-body">
+                    <thead>
+                      <tr className="bg-amber-50">
+                        {['FQDN','IP Addresses','Sources','Asset Type','Status','Resolved At'].map(h => (
+                          <th key={h} className="px-4 py-2.5 text-left font-display font-semibold text-pnb-crimson">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subdomainData.map((s, i) => (
+                        <tr key={i} className={`border-b border-amber-50 ${i%2===0?'bg-white/80':'bg-amber-50/30'}`}>
+                          <td className="px-4 py-2.5 font-mono text-blue-700 font-semibold">{s.fqdn}</td>
+                          <td className="px-4 py-2.5 font-mono text-gray-600">{s.ips.join(', ') || '—'}</td>
+                          <td className="px-4 py-2.5">
+                            {s.sources.map(src => (
+                              <span key={src} className="bg-blue-100 text-blue-700 font-display text-xs font-bold px-2 py-0.5 rounded mr-1">
+                                {src}
+                              </span>
+                            ))}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-600 capitalize">{s.type}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`font-display text-xs font-bold px-2 py-0.5 rounded ${
+                              s.status === 'resolved' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {s.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">
+                            {new Date().toISOString().slice(0,19) + 'Z'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* TLS Probe Details */}
+              {activeTab === 'probes' && (
+                <div className="p-4 space-y-3">
+                  <p className="font-body text-xs text-gray-500">
+                    TLS version probes from weakest (TLSv1.0) → strongest (TLSv1.3) per asset
+                  </p>
+                  {results.filter(r => r['TLS Supported']).map(r => (
+                    <div key={r['Asset ID']} className="border border-amber-100 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2.5 bg-amber-50 flex items-center justify-between">
+                        <span className="font-display text-xs font-bold text-pnb-crimson">{r['Asset']}</span>
+                        <div className="flex gap-1">
+                          {['TLSv1.0','TLSv1.1','TLSv1.2','TLSv1.3'].map(v => {
+                            const supported = (r['Supported TLS Versions'] || []).includes(v)
+                            return (
+                              <span key={v} className={`font-mono text-xs font-bold px-2 py-0.5 rounded
+                                ${supported
+                                  ? v === 'TLSv1.3' ? 'bg-green-100 text-green-700'
+                                  : v === 'TLSv1.2' ? 'bg-blue-100 text-blue-700'
+                                  : 'bg-red-100 text-red-600'
+                                  : 'bg-gray-100 text-gray-400'
+                                }`}>
+                                {v}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-4 gap-0 divide-x divide-amber-50">
+                        {[
+                          ['Cipher Suite',  r['Cipher Suite']],
+                          ['Key Exchange',  r['Key Exchange Algorithm']],
+                          ['PFS',           r['PFS Status']],
+                          ['Latency',       r['Handshake Latency'] ? `${r['Handshake Latency']} ms` : '—'],
+                        ].map(([k, v]) => (
+                          <div key={k} className="px-3 py-2 text-xs">
+                            <p className="font-display font-semibold text-gray-500 text-xs">{k}</p>
+                            <p className={`font-mono font-bold mt-0.5 ${
+                              k === 'PFS' ? (v === 'Yes' ? 'text-green-600' : 'text-red-600') : 'text-gray-800'
+                            }`}>{v || '—'}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!scanning && !results && (
+            <div className="glass-card rounded-xl p-12 text-center">
+              <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Radar size={32} className="text-pnb-amber" />
+              </div>
+              <p className="font-display text-sm font-bold text-pnb-crimson">Ready to Scan</p>
+              <p className="font-body text-xs text-gray-500 mt-2 max-w-sm mx-auto">
+                Add targets on the left (domains or IPs), configure ports and timeouts,
+                then click <strong>Run Scan</strong> to start TLS probing and CBOM generation.
+              </p>
+              <div className="flex justify-center gap-4 mt-5">
+                {['TLSv1.0 → 1.3 probe','Cert extraction','CBOM output','Subdomain enum'].map(f => (
+                  <div key={f} className="flex items-center gap-1.5 text-xs font-body text-gray-500">
+                    <div className="w-1.5 h-1.5 bg-amber-400 rounded-full" />
+                    {f}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
