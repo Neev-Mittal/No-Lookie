@@ -22,22 +22,29 @@ export default function AssetInventory() {
   const loadAssets = async () => {
     setLoading(true)
     setError(null)
-    const result = await dataAPI.getAssets(50)
+    const result = await dataAPI.getSubdomains(10000)
     
-    if (result.success && result.assets.length > 0) {
-      const transformedAssets = result.assets.map((a, i) => ({
+    if (result.success && result.subdomains.length > 0) {
+      // Deduplicate by fqdn — same host on multiple ports should show as one entry
+      const seenFqdns = new Set()
+      const unique = result.subdomains.filter(a => {
+        if (seenFqdns.has(a.fqdn)) return false
+        seenFqdns.add(a.fqdn)
+        return true
+      })
+      const transformedAssets = unique.map((a, i) => ({
         id: i + 1,
-        name: a.name,
-        url: a.url,
-        ipv4: a.ip,
-        ipv6: '-',
-        type: 'Web App',
+        name: a.fqdn,
+        url: `https://${a.fqdn}`,
+        ipv4: a.ips?.find(ip => ip.includes('.')) || '-',
+        ipv6: a.ips?.find(ip => ip.includes(':')) || '-',
+        type: a.type === 'domain' ? 'Web App' : (a.type || 'Unknown'),
         owner: 'IT',
-        risk: a.riskCategory || 'Medium',
-        cert: a.notAfter ? (new Date(a.notAfter) > new Date() ? 'Valid' : 'Expired') : 'Unknown',
-        keyLen: `${a.keyBits}-bit`,
-        pqc: a.pqcLabel.includes('PQC'),
-        lastScan: '2 hrs ago',
+        risk: 'Medium',
+        cert: 'Unknown',
+        keyLen: '-',
+        pqc: false,
+        lastScan: a.resolvedAt ? new Date(a.resolvedAt).toLocaleDateString() : 'Unknown',
       }))
       setAssets(transformedAssets)
     } else if (!result.success) {

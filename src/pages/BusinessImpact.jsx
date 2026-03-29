@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { Zap, TrendingUp, AlertTriangle, Target } from 'lucide-react'
+import dataAPI from '../dataAPI'
 
 // ─── Simulation Engine Logic (mirrors simulation_engine.py) ──────────────────
 
@@ -41,22 +42,7 @@ function businessRisk(qvar) {
   return                          { label: 'Low Financial Risk',     color: '#16a34a' }
 }
 
-// ─── Dataset ──────────────────────────────────────────────────────────────────
-
-const ASSETS = [
-  { id:'api',         name:'aafip.pnb.bank.in',      tls:'TLSv1.2', keyBits:2048, pfs:true,  hei:65,  value:10_000_000, shelf:5,
-    blast:{ direct:['api_database'],              indirect:['api_auth'],           cascading:['api_fraud','api_analytics'] } },
-  { id:'auth',        name:'auth.pnb.bank.in',       tls:'TLSv1.1', keyBits:1024, pfs:false, hei:82,  value:15_000_000, shelf:7,
-    blast:{ direct:['auth_session_store'],        indirect:['auth_ldap'],          cascading:['auth_risk_engine','auth_audit'] } },
-  { id:'payment',     name:'payment.pnb.bank.in',    tls:'TLSv1.3', keyBits:4096, pfs:true,  hei:22,  value:50_000_000, shelf:10,
-    blast:{ direct:['payment_clearing'],          indirect:['payment_cbdc'],       cascading:['payment_rbi_feed','payment_fraud'] } },
-  { id:'core',        name:'core-banking.pnb.bank.in',tls:'TLSv1.2',keyBits:2048, pfs:true,  hei:58,  value:80_000_000, shelf:10,
-    blast:{ direct:['core_gl','core_accounts'],   indirect:['core_eba'],           cascading:['core_treasury','core_swift'] } },
-  { id:'vpn',         name:'vpn.pnb.bank.in',        tls:'TLSv1.1', keyBits:1024, pfs:false, hei:91,  value:5_000_000,  shelf:3,
-    blast:{ direct:['vpn_gateway'],               indirect:['vpn_ipsec'],          cascading:['vpn_remote_access'] } },
-  { id:'netbanking',  name:'netbanking.pnb.bank.in',  tls:'TLSv1.3', keyBits:2048, pfs:true,  hei:38,  value:30_000_000, shelf:5,
-    blast:{ direct:['nb_session','nb_otp'],       indirect:['nb_fraud_check'],     cascading:['nb_statement','nb_analytics'] } },
-]
+// ─── Dataset (dynamically loaded from PNB) ──────────────────────────────────────────────────────────────────
 
 // Build graph nodes + edges for a given asset
 function buildGraph(asset, scenario) {
@@ -403,10 +389,30 @@ function QVarPanel({ asset, scenario }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BusinessImpact() {
-  const [selectedId, setSelectedId] = useState('api')
+  const [assets, setAssets] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
   const [scenario,   setScenario]   = useState('Moderate')
 
-  const selectedAsset = ASSETS.find(a => a.id === selectedId)
+  useEffect(() => {
+    const fetchImpactData = async () => {
+      try {
+        const res = await dataAPI.getBusinessImpact();
+        if (res.success && res.assets && res.assets.length > 0) {
+          setAssets(res.assets);
+          setSelectedId(res.assets[0].id);
+        }
+      } catch (err) {
+        console.error('Failed to fetch business impact data', err);
+      }
+    };
+    fetchImpactData();
+  }, [])
+
+  if (assets.length === 0 || !selectedId) {
+    return <div className="p-8 flex items-center justify-center min-h-[400px] text-pnb-crimson font-display font-semibold tracking-wide bg-amber-50/50 rounded-2xl border border-amber-200">Loading Enterprise Impact Simulation Data...</div>
+  }
+
+  const selectedAsset = assets.find(a => a.id === selectedId) || assets[0];
 
   return (
     <div className="space-y-4">
@@ -455,7 +461,7 @@ export default function BusinessImpact() {
           </span>
         </div>
         <div className="ml-auto flex items-center gap-3">
-          {ASSETS.map(a => {
+          {assets.map(a => {
             const sens = determineSensitivity(a.name)
             const qvar = calcQVaR(a.hei, a.value, a.shelf, scenario)
             const { color } = businessRisk(qvar)
@@ -477,7 +483,7 @@ export default function BusinessImpact() {
           <p className="font-display text-xs font-semibold text-pnb-crimson uppercase tracking-wide px-1">
             Select Asset
           </p>
-          {ASSETS.map(asset => {
+          {assets.map(asset => {
             const sens  = determineSensitivity(asset.name)
             const qvar  = calcQVaR(asset.hei, asset.value, asset.shelf, scenario)
             const { label: rl, color: rc } = businessRisk(qvar)
@@ -585,7 +591,7 @@ export default function BusinessImpact() {
               </tr>
             </thead>
             <tbody>
-              {ASSETS.map((a, i) => {
+              {assets.map((a, i) => {
                 const sens  = determineSensitivity(a.name)
                 const years = Math.max(0, CRQC_YEARS[scenario] - 2020)
                 const exp   = calcExposure(a.hei, years, sens)

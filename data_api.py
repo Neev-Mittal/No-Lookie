@@ -44,7 +44,7 @@ async def health():
 async def get_assets(limit: int = 100):
     """Get asset inventory from CBOM."""
     try:
-        data = load_json_file("pnb/cbom.json")
+        data = load_json_file("PNB/cbom.json")
         # Limit results
         if limit and 'records' in data:
             data['records'] = data['records'][:limit]
@@ -63,7 +63,7 @@ async def get_cbom():
 async def get_subdomains(limit: int = 100):
     """Get discovered subdomains."""
     try:
-        data = load_json_file("pnb/subdomains.json")
+        data = load_json_file("PNB/subdomains.json")
         if limit and 'subdomains' in data:
             data['subdomains'] = data['subdomains'][:limit]
         return data
@@ -76,7 +76,7 @@ async def get_subdomains(limit: int = 100):
 async def get_shadow_crypto():
     """Get shadow cryptography findings."""
     try:
-        return load_json_file("risk/shadow-crypto.json")
+        return load_json_file("PNB/shadow-crypto.json")
     except HTTPException:
         raise
     except Exception as e:
@@ -86,7 +86,7 @@ async def get_shadow_crypto():
 async def get_pqc_posture():
     """Get PQC readiness posture."""
     try:
-        return load_json_file("pnb/cbom.json")
+        return load_json_file("PNB/enriched_cbom.json")
     except HTTPException:
         raise
     except Exception as e:
@@ -96,7 +96,7 @@ async def get_pqc_posture():
 async def get_cyber_rating():
     """Get cyber risk rating."""
     try:
-        return load_json_file("risk/enriched_cbom.json")
+        return load_json_file("PNB/enriched_cbom.json")
     except HTTPException:
         raise
     except Exception as e:
@@ -124,7 +124,7 @@ async def get_statistics():
         expiring_certs = 0
         
         try:
-            cbom_data = load_json_file("pnb/cbom.json")
+            cbom_data = load_json_file("PNB/cbom.json")
             records = cbom_data.get("records", []) if isinstance(cbom_data, dict) else cbom_data
             total_assets = len(records)
             
@@ -163,10 +163,7 @@ async def get_statistics():
             pass
             
         try:
-            try:
-                shadow_crypto = load_json_file("pnb/shadow-crypto.json")
-            except HTTPException:
-                shadow_crypto = load_json_file("risk/shadow-crypto.json")
+            shadow_crypto = load_json_file("PNB/shadow-crypto.json")
         except Exception:
             shadow_crypto = {"severity_summary": {"high": 0}}
             

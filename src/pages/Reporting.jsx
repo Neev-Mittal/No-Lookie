@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import dataAPI from '../dataAPI'
 import {
   Users, Calendar, Search, Download,
   Mail, FolderOpen, Link2, Bell, Plus, ChevronDown
@@ -11,7 +12,24 @@ const reportTypes = [
 ]
 
 export default function Reporting() {
-  const [active, setActive] = useState(null)  // null | 'exec' | 'scheduled' | 'ondemand'
+  const [active, setActive] = useState(null)
+  const [stats, setStats] = useState(null)
+
+  useEffect(() => {
+    Promise.all([
+      dataAPI.getDashboardData(),
+      dataAPI.getCBOMData(),
+      dataAPI.getPostureOfPQCData(),
+      dataAPI.getCyberRatingData()
+    ]).then(([dash, cbom, pqc, rating]) => {
+      setStats({
+        dash: dash.success ? dash : {},
+        cbom: cbom.success ? cbom : {},
+        pqc: pqc.success ? pqc : { summary: {} },
+        rating: rating.success ? rating : {}
+      })
+    })
+  }, [])
 
   if (active === null) {
     return <SelectionView setActive={setActive} />
@@ -22,7 +40,7 @@ export default function Reporting() {
   if (active === 'ondemand') {
     return <OnDemandView setActive={setActive} />
   }
-  return <ExecView setActive={setActive} />
+  return <ExecView setActive={setActive} stats={stats} />
 }
 
 // ── Landing selection ─────────────────────────────────────────────────────────
@@ -80,7 +98,52 @@ function SelectionView({ setActive }) {
 }
 
 // ── Executive Reporting ───────────────────────────────────────────────────────
-function ExecView({ setActive }) {
+function ExecView({ setActive, stats }) {
+  if (!stats) return <div className="p-8 text-pnb-crimson animate-pulse">Aggregating executive metrics...</div>
+
+  const tiles = [
+    { 
+      title: 'Assets Discovery', 
+      items: [
+        `${stats.dash.statCards?.[0]?.value || 0} Total subdomains & IPs`,
+        `${stats.dash.statCards?.[1]?.value || 0} Public Web Applications`
+      ], 
+      icon: '🔍', color: 'bg-blue-50 border-blue-200' 
+    },
+    { 
+      title: 'Cyber Rating', 
+      items: [
+        `Consolidated Score: ${stats.rating.enterpriseScore || 0}`,
+        `Current Tier: ${stats.rating.enterpriseTier || 'Unknown'}`
+      ], 
+      icon: '⭐', color: 'bg-amber-50 border-amber-200' 
+    },
+    { 
+      title: 'Assets Inventory', 
+      items: [
+        `Active Certificates: ${stats.cbom.stats?.activeCerts || 0}`,
+        `Weak Crypto Found: ${stats.cbom.stats?.weakCrypto || 0}`
+      ], 
+      icon: '🗂', color: 'bg-green-50 border-green-200' 
+    },
+    { 
+      title: 'Posture of PQC', 
+      items: [
+        `Elite-PQC Ready: ${stats.pqc.summary?.pqcReadyPct || 0}%`,
+        `Legacy Protocol Count: ${stats.pqc.summary?.legacyPct || 0}%`
+      ], 
+      icon: '🛡', color: 'bg-purple-50 border-purple-200' 
+    },
+    { 
+      title: 'CBOM', 
+      items: [
+        `Total Assets Analyzed: ${stats.cbom.stats?.totalApps || 0}`,
+        `Certificate/Cipher Issues: ${stats.cbom.stats?.certIssues || 0}`
+      ], 
+      icon: '📋', color: 'bg-orange-50 border-orange-200' 
+    },
+  ]
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -90,14 +153,7 @@ function ExecView({ setActive }) {
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {/* Summary tiles */}
-        {[
-          { title:'Assets Discovery', items:['212,450 domains, IPs & subdomains','13,372 cloud assets'], icon:'🔍', color:'bg-blue-50 border-blue-200' },
-          { title:'Cyber Rating', items:['Tier 1  Excellent','Tier 2  Good','Tier 3  Satisfactory','Tier 4  Needs Improvement'], icon:'⭐', color:'bg-amber-50 border-amber-200' },
-          { title:'Assets Inventory', items:['SSL Certificates: 8,761','Software: 13,211','IoT Devices: 3,854','Login Forms: 1,198'], icon:'🗂', color:'bg-green-50 border-green-200' },
-          { title:'Posture of PQC', items:['Progress on post-quantum cryptography adoption','33% — Phase 1 complete','22% — In progress'], icon:'🛡', color:'bg-purple-50 border-purple-200' },
-          { title:'CBOM', items:['Comprehensive Bill of Materials','8,248 vulnerable components'], icon:'📋', color:'bg-orange-50 border-orange-200' },
-        ].map(({ title, items, icon, color }) => (
+        {tiles.map(({ title, items, icon, color }) => (
           <div key={title} className={`glass-card rounded-xl p-4 border ${color}`}>
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xl">{icon}</span>

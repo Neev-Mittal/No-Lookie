@@ -8,82 +8,73 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
 } from 'recharts'
 
-const defaultStatCards = [
-  { label: 'Total Assets',          value: 0,  icon: Layers,      color: '#1d4ed8', bg: 'bg-blue-50'   },
-  { label: 'Public Web Apps',       value: 0,   icon: Globe,       color: '#16a34a', bg: 'bg-green-50'  },
-  { label: 'APIs',                   value: 0,   icon: Server,      color: '#7c3aed', bg: 'bg-purple-50' },
-  { label: 'Servers',               value: 0,   icon: Server,      color: '#0891b2', bg: 'bg-cyan-50'   },
-  { label: 'Expiring Certificates', value: 0,    icon: AlertTriangle,color:'#d97706', bg: 'bg-amber-50', alert: true },
-  { label: 'High Risk Assets',      value: 0,   icon: ShieldOff,   color: '#dc2626', bg: 'bg-red-50',   critical: true },
-]
+import dataAPI from '../dataAPI'
 
-const assetTypeDist = [
-  { name: 'Web Apps',      value: 42,  color: '#3b82f6' },
-  { name: 'APIs',          value: 26,  color: '#6366f1' },
-  { name: 'Servers',       value: 37,  color: '#22c55e' },
-  { name: 'Load Balancers',value: 11,  color: '#f59e0b' },
-  { name: 'Other',         value: 12,  color: '#94a3b8' },
-]
+const ICON_MAP = {
+  Layers, Globe, Server, AlertTriangle, ShieldOff
+}
 
-const riskDist = [
-  { name: 'Critical', count: 5  },
-  { name: 'High',     count: 9  },
-  { name: 'Medium',   count: 34 },
-  { name: 'Low',      count: 80 },
-]
-
-const certExpiry = [
-  { label: '0–30 Days',  count: 3,  color: '#dc2626' },
-  { label: '30–60 Days', count: 4,  color: '#f59e0b' },
-  { label: '60–90 Days', count: 2,  color: '#22c55e' },
-  { label: '>90 Days',   count: 84, color: '#3b82f6' },
-]
-
-const ipBreakdown = [
-  { name: 'IPv4 86%', value: 86, color: '#1d4ed8' },
-  { name: 'IPv6 14%', value: 14, color: '#60a5fa' },
-]
-
-const inventoryData = [
-  { name: 'portal.company.com', url: 'https://portal.company.com', ipv4: '34.12.11.45', type: 'Web App', owner: 'IT',     risk: 'High',   cert: 'Valid',    keyLen: '2048-bit', scan: '2 hrs ago' },
-  { name: 'api.company.com',    url: 'https://api.company.com',    ipv4: '34.12.11.90', type: 'API',     owner: 'DevOps', risk: 'Medium', cert: 'Expiring', keyLen: '4096-bit', scan: '5 hrs ago' },
-  { name: 'vpn.company.com',    url: 'https://vpn.company.com',    ipv4: '34.55.90.21', type: 'Gateway', owner: 'IT',     risk: 'Critical',cert: 'Expired', keyLen: '1024-bit', scan: '1 hr ago'  },
-  { name: 'mail.company.com',   url: 'https://mail.company.com',   ipv4: '35.11.44.10', type: 'Server',  owner: 'IT',     risk: 'Low',    cert: 'Valid',    keyLen: '3072-bit', scan: '1 day ago' },
-  { name: 'app.company.com',    url: 'https://app.company.com',    ipv4: '34.77.21.12', type: 'Web App', owner: 'IT',     risk: 'Medium', cert: 'Valid',    keyLen: '2048-bit', scan: '5 days ago'},
-]
-
-const riskColor = { High: 'risk-high', Medium: 'risk-medium', Low: 'risk-low', Critical: 'risk-critical' }
-const certColor  = { Valid: 'text-green-600', Expiring: 'text-amber-500', Expired: 'text-red-600' }
+const riskColor = { High: 'risk-high', Medium: 'risk-medium', Low: 'risk-low', Critical: 'risk-critical', Unknown: 'bg-gray-500' }
+const certColor  = { Valid: 'text-green-600', Expiring: 'text-amber-500', Expired: 'text-red-600', Unknown: 'text-gray-500' }
 
 const recentActivity = [
   { icon: '⊗', text: 'Fail scan completed: 125 assets',       time: '10 min ago', color: 'text-red-500'   },
-  { icon: '⚠', text: 'Weak cipher detected: vpn.company.com', time: '1 hr ago',   color: 'text-amber-500' },
-  { icon: '⊠', text: 'Certificate expiring soon: api.company.com', time: '3 hrs ago', color: 'text-orange-500' },
-  { icon: '✦', text: 'New asset discovered: dev-api.company.com',  time: '1 day ago',  color: 'text-blue-500'  },
-  { icon: '⚙', text: 'NCKY asset & migrated',                 time: '2 days ago', color: 'text-green-500' },
+  { icon: '⚠', text: 'Weak cipher detected: vpn.pnb.bank.in', time: '1 hr ago',   color: 'text-amber-500' },
+  { icon: '⊠', text: 'Certificate expiring soon: api.pnb.in', time: '3 hrs ago', color: 'text-orange-500' },
+  { icon: '✦', text: 'New asset discovered: test.pnb.in',     time: '1 day ago',  color: 'text-blue-500'  },
+  { icon: '⚙', text: 'NCKY asset migrated',                   time: '2 days ago', color: 'text-green-500' },
 ]
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState('')
-  const [statCards, setStatCards] = useState(defaultStatCards)
+  const [statCards, setStatCards] = useState([])
+  const [assetTypeDist, setAssetTypeDist] = useState([])
+  const [riskDist, setRiskDist] = useState([])
+  const [certExpiry, setCertExpiry] = useState([])
+  const [ipBreakdown, setIpBreakdown] = useState([])
+  const [inventoryData, setInventoryData] = useState([])
+  const [dnsRecords, setDnsRecords] = useState([])
+  const [cryptoOverview, setCryptoOverview] = useState([])
 
   useEffect(() => {
-    // Fetch statistics from API
-    fetch('http://localhost:8001/api/statistics')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.assets) {
-          const updatedCards = [...defaultStatCards]
-          updatedCards[0].value = data.assets.total || 0  // Total Assets
-          updatedCards[1].value = data.assets.web_apps || 0 // Public Web Apps
-          updatedCards[2].value = data.assets.apis || 0     // APIs
-          updatedCards[3].value = data.assets.servers || 0  // Servers
-          updatedCards[4].value = data.findings?.expiring_certs || 0 // Expiring Certs
-          updatedCards[5].value = data.findings?.by_severity?.high || 0  // High Risk
-          setStatCards(updatedCards)
+    const fetchDashboardState = async () => {
+      try {
+        const res = await dataAPI.getDashboardData();
+        if (res.success) {
+          setStatCards(res.statCards.map(c => ({
+            ...c, icon: ICON_MAP[c.icon] || Server
+          })));
+          setAssetTypeDist(res.assetTypeDist);
+          setRiskDist(res.riskDist);
+          setCertExpiry(res.certExpiry);
+          setIpBreakdown(res.ipBreakdown);
         }
-      })
-      .catch(err => console.error('Failed to fetch statistics:', err))
+
+        const invRes = await dataAPI.getSubdomains();
+        if (invRes.success && invRes.subdomains) {
+          setInventoryData(invRes.subdomains.slice(0, 5).map(s => ({
+            name: s.fqdn,
+            url: `https://${s.fqdn}`,
+            ipv4: s.ips?.[0] || '-',
+            type: s.type === 'domain' ? 'Web App' : (s.type || 'Unknown'),
+            owner: 'IT',
+            risk: 'Medium',
+            cert: 'Unknown',
+            keyLen: '-',
+            scan: new Date(s.resolvedAt).toLocaleDateString()
+          })));
+        }
+
+        const extRes = await dataAPI.getHomepageExtras();
+        if (extRes.success) {
+          setDnsRecords(extRes.dnsRecords);
+          setCryptoOverview(extRes.cryptoOverview);
+        }
+      } catch (err) {
+        console.error('Failed fetching home dashboard stats:', err);
+      }
+    };
+    fetchDashboardState();
   }, [])
 
   return (
@@ -276,16 +267,15 @@ export default function Home() {
 
       {/* BOTTOM ROW: Nameservers + Crypto Overview + Activity */}
       <div className="grid grid-cols-3 gap-4">
-        {/* Nameserver Records */}
+        {/* Asset DNS Records */}
         <div className="glass-card rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-amber-100 flex items-center justify-between">
             <h3 className="font-display text-xs font-semibold text-pnb-crimson uppercase tracking-wide">
-              Nameserver Records
+              Asset DNS Records
             </h3>
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-gray-500 font-body">Domain:</span>
-              <span className="text-xs font-display font-semibold text-pnb-crimson">Company.Com</span>
-              <button className="bg-amber-500 text-white text-xs font-display px-2 py-0.5 rounded ml-1">Resolve</button>
+              <span className="text-xs font-display font-semibold text-pnb-crimson">pnb.bank.in</span>
             </div>
           </div>
           <table className="w-full text-xs font-body">
@@ -297,22 +287,18 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {[
-                ['ns1.company.com','NS','192.0.2.10','3600'],
-                ['ns2.company.com','NS','192.0.2.11','3600'],
-                ['ns3.company.com','NS','192.0.2.12','3600'],
-                ['www.company.com','A', '34.12.11.45','300'],
-                ['mail.company.com','MX','35.11.44.10','300'],
-              ].map(([h, t, ip, ttl], i) => (
+              {dnsRecords.map((r, i) => (
                 <tr key={i} className={i % 2 === 0 ? 'table-row-even' : 'table-row-odd'}>
-                  <td className="px-3 py-1.5 font-mono text-gray-700">{h}</td>
+                  <td className="px-3 py-1.5 font-mono text-gray-700 truncate max-w-36" title={r.hostname}>
+                    {r.hostname}
+                  </td>
                   <td className="px-3 py-1.5">
                     <span className="bg-blue-100 text-blue-700 text-xs font-display font-bold px-1.5 py-0.5 rounded">
-                      {t}
+                      {r.type}
                     </span>
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-gray-700">{ip}</td>
-                  <td className="px-3 py-1.5 text-gray-500">{ttl}</td>
+                  <td className="px-3 py-1.5 font-mono text-gray-700">{r.ip}</td>
+                  <td className="px-3 py-1.5 text-gray-500">{r.ttl}</td>
                 </tr>
               ))}
             </tbody>
@@ -323,42 +309,38 @@ export default function Home() {
         <div className="glass-card rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-amber-100">
             <h3 className="font-display text-xs font-semibold text-pnb-crimson uppercase tracking-wide">
-              Crypto & Security Overview
+              Crypto &amp; Security Overview
             </h3>
           </div>
           <table className="w-full text-xs font-body">
             <thead>
               <tr className="bg-amber-50">
-                {['Asset','Key Length','Cipher Suite','TLS'].map(h => (
+                {['Asset','Key','PQC Posture','TLS'].map(h => (
                   <th key={h} className="px-3 py-2 text-left font-display font-semibold text-pnb-crimson">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {[
-                ['portal.company.com','2038-bit','ECDHE-43A_AE3256-GCM','1.2'],
-                ['api.company.com',   '4098-bit','TLS_AES_336-GCM-SHA394','1.3'],
-                ['vpn.company.com',   '1024-bit','TLS_PR4_WITH_DES_CEC','1.0'],
-                ['mail.company.com',  '3072-bit','ECDHE-ECDSA-AE3756-ECM','1.2'],
-                ['app.company.com',   '2048-bit','TLS_AES_728-GCM_SNA256','1.3'],
-              ].map(([a, kl, cs, tls], i) => (
+              {cryptoOverview.map((row, i) => (
                 <tr key={i} className={i % 2 === 0 ? 'table-row-even' : 'table-row-odd'}>
-                  <td className="px-3 py-1.5 text-gray-700 truncate max-w-20">{a.split('.')[0]}</td>
+                  <td className="px-3 py-1.5 text-gray-700 truncate max-w-24" title={row.asset}>
+                    {row.asset.split('.')[0]}
+                  </td>
                   <td className="px-3 py-1.5">
                     <span className={`font-mono text-xs font-bold ${
-                      kl.startsWith('1024') ? 'text-red-600' :
-                      kl.startsWith('4') ? 'text-green-600' : 'text-blue-600'
-                    }`}>{kl}</span>
+                      row.keyLen === 'N/A' ? 'text-gray-400' :
+                      row.keyLen.startsWith('1024') ? 'text-red-600' : 'text-blue-600'
+                    }`}>{row.keyLen}</span>
                   </td>
                   <td className="px-3 py-1.5 font-mono text-gray-600 text-xs truncate max-w-28">
-                    <span className={cs.includes('DES') ? 'bg-red-100 text-red-700 px-1 rounded' : ''}>
-                      {cs.substring(0, 18)}…
+                    <span className={row.cipherIsWeak ? 'bg-red-100 text-red-700 px-1 rounded' : 'bg-green-100 text-green-700 px-1 rounded'}>
+                      {row.cipher.length > 18 ? row.cipher.substring(0, 18) + '…' : row.cipher}
                     </span>
                   </td>
                   <td className="px-3 py-1.5">
-                    <span className={`font-display font-bold text-xs ${
-                      tls === '1.3' ? 'text-green-600' : tls === '1.0' ? 'text-red-600' : 'text-amber-600'
-                    }`}>{tls}</span>
+                    <span className={`font-display font-bold text-xs ${row.tlsColor}`}>
+                      {row.tls}
+                    </span>
                   </td>
                 </tr>
               ))}

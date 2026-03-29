@@ -1,77 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Search, Calendar } from 'lucide-react'
+import dataAPI from '../dataAPI'
 
-// ── DATA ──────────────────────────────────────────────────────────────────────
-
-const domainData = {
-  New: [
-    { detected:'03 Mar 2026', domain:'www.cos.pnb.bank.in',        registered:'17 Feb 2005', registrar:'National Internet Exchange of India', company:'PNB' },
-    { detected:'17 Oct 2024', domain:'www2.pnbrrbkiosk.in',        registered:'22 Mar 2021', registrar:'National Internet Exchange of India', company:'PNB' },
-    { detected:'17 Oct 2024', domain:'upload.pnbuniv.net.in',       registered:'22 Mar 2021', registrar:'National Internet Exchange of India', company:'PNB' },
-    { detected:'17 Oct 2024', domain:'postman.pnb.bank.in',         registered:'22 Mar 2021', registrar:'National Internet Exchange of India', company:'PNB' },
-    { detected:'17 Nov 2024', domain:'proxy.pnb.bank.in',           registered:'22 Mar 2021', registrar:'National Internet Exchange of India', company:'PNB' },
-  ],
-  'False Positive': [
-    { detected:'15 Sep 2024', domain:'mirror.pnb-external.net',     registered:'10 Jan 2020', registrar:'GoDaddy LLC',                        company:'Third Party' },
-    { detected:'20 Oct 2024', domain:'cdn.pnbservices.co',           registered:'05 Mar 2019', registrar:'Namecheap Inc',                      company:'Third Party' },
-  ],
-  Confirmed: [
-    { detected:'01 Feb 2026', domain:'secure.pnb.bank.in',          registered:'10 Mar 2015', registrar:'National Internet Exchange of India', company:'PNB' },
-    { detected:'10 Jan 2026', domain:'netbanking.pnb.bank.in',       registered:'01 Jun 2010', registrar:'National Internet Exchange of India', company:'PNB' },
-  ],
-}
-domainData.All = [...domainData.New, ...domainData['False Positive'], ...domainData.Confirmed]
-
-const sslData = {
-  New: [
-    { detected:'10 Mar 2026', sha:'b7563b983bfd217d471f607c9bbc509034a6', validFrom:'08 Feb 2026', common:'Generic Cert for WF Ovrd', company:'PNB', authority:'Symantac' },
-    { detected:'10 Mar 2026', sha:'d8527f5c3e99b37164a8f3274a914506c94',  validFrom:'07 Feb 2026', common:'Generic Cert for WF Ovrd', company:'PNB', authority:'Digi-Cert' },
-    { detected:'10 Mar 2026', sha:'Abe3195b86704f88cb75c7bcd11c69b9e493', validFrom:'06 Feb 2026', common:'Generic Cert for WF Ovrd', company:'PNB', authority:'Entrust' },
-  ],
-  'False/ignore': [
-    { detected:'01 Mar 2026', sha:'fa92c1e4d3f0bcd8129aa74610e943f',      validFrom:'01 Jan 2026', common:'Proxy Cert Override',      company:'PNB', authority:'Let\'s Encrypt' },
-  ],
-  Confirmed: [],
-}
-sslData.All = [...sslData.New, ...sslData['False/ignore'], ...sslData.Confirmed]
-
-const ipData = {
-  New: [
-    { detected:'05 Mar 2026', ip:'40.104.62.216',  ports:'80',     subnet:'103.107.224.0/22', asn:'AS9583', netname:'MSFT',             location:'-',            company:'Punjab National Bank' },
-    { detected:'17 Oct 2024', ip:'40.101.72.212',  ports:'80',     subnet:'103.107.224.0/22', asn:'AS9583', netname:'-',                location:'India',        company:'Punjab National Bank' },
-    { detected:'17 Oct 2024', ip:'402.10.1.1',     ports:'80',     subnet:'103.107.224.0/22', asn:'AS9583', netname:'-',                location:'-',            company:'Punjab National Bank' },
-    { detected:'17 Oct 2024', ip:'103.25.151.22',  ports:'53,80',  subnet:'103.107.224.0/22', asn:'AS9583', netname:'Quantum-Link-Co',  location:'Nashik, India',company:'Punjab National Bank' },
-    { detected:'17 Nov 2024', ip:'181.65.122.92',  ports:'80,443', subnet:'103.107.224.0/22', asn:'AS9583', netname:'E2E-Networks-IN', location:'Chennai, India',company:'Punjab National Bank' },
-    { detected:'17 Nov 2024', ip:'20.153.63.72',   ports:'443',    subnet:'103.107.224.0/22', asn:'AS9583', netname:'-',                location:'Leh, India',   company:'Punjab National Bank' },
-    { detected:'17 Nov 2024', ip:'21.151.42.188',  ports:'22',     subnet:'103.107.224.0/22', asn:'AS9583', netname:'-',                location:'India',        company:'Punjab National Bank' },
-    { detected:'17 Nov 2024', ip:'402.11.22.153',  ports:'3997',   subnet:'103.107.224.0/22', asn:'AS9583', netname:'E2E-Networks-IN', location:'India',        company:'Punjab National Bank' },
-  ],
-  'False or ignore': [],
-  Confirmed: [],
-}
-ipData.All = ipData.New
-
-const softwareData = {
-  New: [
-    { detected:'05 Mar 2026', product:'http_server', version:'-',      type:'WebServer',  port:'443',  host:'49.51.98.173',  company:'PNB' },
-    { detected:'17 Oct 2024', product:'http_server', version:'--',     type:'WebServer',  port:'587',  host:'49.52.123.215', company:'PNB' },
-    { detected:'17 Oct 2024', product:'Apache',      version:'-',      type:'WebServer',  port:'443',  host:'40.59.99.173',  company:'PNB' },
-    { detected:'17 Oct 2024', product:'IIS',         version:'10.0',   type:'WebServer',  port:'80',   host:'40.101.27.212', company:'PNB' },
-    { detected:'17 Nov 2024', product:'Microsoft–IIS',version:'10.0',  type:'WebServer',  port:'80',   host:'401.10.274.14', company:'PNB' },
-    { detected:'06 Mar 2026', product:'OpenResty',   version:'1.27.1.1',type:'Web Server',port:'2087', host:'66.68.262.93',  company:'PNB' },
-  ],
-  'False or ignore': [],
-  Confirmed: [],
-}
-softwareData.All = softwareData.New
-
-// ── COMPONENT ─────────────────────────────────────────────────────────────────
-
-const TAB_CONFIG = {
-  Domains:            { label: 'Domains (20)',           subTabs: ['New (5)', 'False Positive (10)', 'Confirmed (2)', 'All (3)'] },
-  SSL:                { label: 'SSL (15)',               subTabs: ['New (3)', 'False/ignore (9)',    'Confirmed',     'All (3)'] },
-  'IP Address/Subnets':{ label: 'IP Address/Subnets (34)',subTabs: ['New (15)','False or ignore (10)','Confirmed (9)','All (34)'] },
-  Software:           { label: 'Software (52)',          subTabs: ['New (10)', 'False or ignore (6)', 'Confirmed (36)','All (52)'] },
+const BASE_TAB_CONFIG = {
+  Domains:            { label: 'Domains',           subTabs: ['New', 'False Positive', 'Confirmed', 'All'] },
+  SSL:                { label: 'SSL',               subTabs: ['New', 'False/ignore',    'Confirmed',     'All'] },
+  'IP Address/Subnets':{ label: 'IP Address/Subnets',subTabs: ['New','False or ignore','Confirmed','All'] },
+  Software:           { label: 'Software',          subTabs: ['New', 'False or ignore', 'Confirmed','All'] },
 }
 
 function StatusBadge({ text }) {
@@ -93,8 +28,31 @@ export default function AssetDiscovery() {
   const [searchQuery, setSearchQuery] = useState('')
   const [dateStart, setDateStart] = useState('')
 
-  const subTabs = TAB_CONFIG[mainTab].subTabs
+  const [domainData, setDomainData] = useState({ New: [], 'False Positive': [], Confirmed: [], All: [] })
+  const [sslData, setSslData] = useState({ New: [], 'False/ignore': [], Confirmed: [], All: [] })
+  const [ipData, setIpData] = useState({ New: [], 'False or ignore': [], Confirmed: [], All: [] })
+  const [softwareData, setSoftwareData] = useState({ New: [], 'False or ignore': [], Confirmed: [], All: [] })
+
+  useEffect(() => {
+    const fetchDiscoveryData = async () => {
+      try {
+        const res = await dataAPI.getAssetDiscoveryData();
+        if (res.success) {
+          setDomainData(res.domainData);
+          setSslData(res.sslData);
+          setIpData(res.ipData);
+          setSoftwareData(res.softwareData);
+        }
+      } catch (err) {
+        console.error('Failed to fetch Asset Discovery Data', err);
+      }
+    };
+    fetchDiscoveryData();
+  }, [])
+
+  const subTabs = BASE_TAB_CONFIG[mainTab].subTabs
   const subKey  = subTabs[subTabIdx].split(' (')[0].replace(/\s*\(\d+\)/, '').trim()
+
 
   // ── Table content ────────────────────────────────────────────────────────
   const renderTable = () => {
@@ -341,36 +299,53 @@ export default function AssetDiscovery() {
 
       {/* Main tabs */}
       <div className="flex gap-2">
-        {Object.keys(TAB_CONFIG).map(tab => (
-          <button
-            key={tab}
-            onClick={() => { setMainTab(tab); setSubTabIdx(0) }}
-            className={`font-display text-xs font-semibold px-5 py-2.5 rounded-xl transition-all duration-200
-              ${mainTab === tab
-                ? 'bg-gradient-to-r from-pnb-crimson to-red-700 text-white shadow-lg shadow-red-200'
-                : 'bg-white/80 text-gray-600 hover:bg-amber-50 border border-amber-200'
-              }`}
-          >
-            {TAB_CONFIG[tab].label}
-          </button>
-        ))}
+        {Object.keys(BASE_TAB_CONFIG).map(tab => {
+          let count = 0;
+          if (tab === 'Domains') count = domainData.All?.length || 0;
+          if (tab === 'SSL') count = sslData.All?.length || 0;
+          if (tab === 'IP Address/Subnets') count = ipData.All?.length || 0;
+          if (tab === 'Software') count = softwareData.All?.length || 0;
+          
+          return (
+            <button
+              key={tab}
+              onClick={() => { setMainTab(tab); setSubTabIdx(0) }}
+              className={`font-display text-xs font-semibold px-5 py-2.5 rounded-xl transition-all duration-200
+                ${mainTab === tab
+                  ? 'bg-gradient-to-r from-pnb-crimson to-red-700 text-white shadow-lg shadow-red-200'
+                  : 'bg-white/80 text-gray-600 hover:bg-amber-50 border border-amber-200'
+                }`}
+            >
+              {BASE_TAB_CONFIG[tab].label} ({count})
+            </button>
+          )
+        })}
       </div>
 
       {/* Sub tabs */}
       <div className="flex gap-2">
-        {subTabs.map((st, idx) => (
-          <button
-            key={idx}
-            onClick={() => setSubTabIdx(idx)}
-            className={`font-display text-xs font-semibold px-4 py-2 rounded-lg transition-all
-              ${subTabIdx === idx
-                ? 'bg-amber-500 text-white'
-                : 'bg-white/70 text-gray-600 hover:bg-amber-50 border border-amber-200'
-              }`}
-          >
-            {st}
-          </button>
-        ))}
+        {subTabs.map((st, idx) => {
+          let count = 0;
+          const map = mainTab === 'Domains' ? domainData :
+                     mainTab === 'SSL' ? sslData :
+                     mainTab === 'IP Address/Subnets' ? ipData :
+                     softwareData;
+          count = map[st]?.length || 0;
+
+          return (
+            <button
+              key={idx}
+              onClick={() => setSubTabIdx(idx)}
+              className={`font-display text-xs font-semibold px-4 py-2 rounded-lg transition-all
+                ${subTabIdx === idx
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-white/70 text-gray-600 hover:bg-amber-50 border border-amber-200'
+                }`}
+            >
+              {st} ({count})
+            </button>
+          )
+        })}
       </div>
 
       {/* Content */}

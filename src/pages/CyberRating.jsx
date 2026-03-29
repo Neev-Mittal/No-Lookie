@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react'
 import { CheckCircle, AlertCircle, XCircle } from 'lucide-react'
+import dataAPI from '../dataAPI'
 
 const tiers = [
   {
@@ -43,14 +45,7 @@ const tiers = [
   },
 ]
 
-const urlScores = [
-  { url: 'Abc.com', score: 100, tier: 'Elite'    },
-  { url: 'Add.com', score: 50,  tier: 'Standard' },
-  { url: 'Acc.com', score: 0,   tier: 'Critical' },
-  { url: 'portal.pnb.bank.in', score: 82, tier: 'Elite' },
-  { url: 'api.pnb.bank.in',    score: 65, tier: 'Standard' },
-  { url: 'vpn.pnb.bank.in',    score: 15, tier: 'Critical' },
-]
+// urlScores dynamically loaded from PNB
 
 const tierMeta = {
   Legacy:   { min: 0,   max: 399,  color: '#dc2626', bg: 'bg-red-100' },
@@ -87,6 +82,20 @@ function ScoreGauge({ score }) {
 }
 
 export default function CyberRating() {
+  const [data, setData] = useState(null)
+
+  useEffect(() => {
+    dataAPI.getCyberRatingData().then(res => {
+      if (res.success) setData(res)
+    })
+  }, [])
+
+  if (!data) {
+    return <div className="p-8 flex items-center justify-center min-h-[400px] text-pnb-crimson font-display font-semibold tracking-wide bg-amber-50/50 rounded-2xl border border-amber-200">Loading Enterprise Cyber Rating...</div>
+  }
+
+  const { enterpriseScore, enterpriseTier, urlScores } = data;
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -99,13 +108,16 @@ export default function CyberRating() {
         </h2>
         <div className="flex items-center justify-center gap-4 mt-2">
           <div>
-            <ScoreGauge score={755} />
+            <ScoreGauge score={enterpriseScore} />
           </div>
           <div className="text-left">
-            <div className="bg-green-500 text-white font-display font-bold text-4xl px-6 py-3 rounded-xl mb-2">
-              755/1000
+            <div className={`text-white font-display font-bold text-4xl px-6 py-3 rounded-xl mb-2
+              ${enterpriseTier === 'Elite-PQC' ? 'bg-green-500' : enterpriseTier === 'Standard' ? 'bg-amber-500' : 'bg-red-600'}`}>
+              {enterpriseScore}/1000
             </div>
-            <p className="font-display text-sm font-bold text-green-600">Elite-PQC</p>
+            <p className={`font-display text-sm font-bold ${enterpriseTier === 'Elite-PQC' ? 'text-green-600' : enterpriseTier === 'Standard' ? 'text-amber-600' : 'text-red-700'}`}>
+              {enterpriseTier}
+            </p>
             <p className="font-body text-xs text-gray-500">Indicates a stronger security posture</p>
           </div>
         </div>

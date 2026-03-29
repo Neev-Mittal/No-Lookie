@@ -1,27 +1,9 @@
+import { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { CheckCircle, XCircle, AlertTriangle, TrendingUp } from 'lucide-react'
+import dataAPI from '../dataAPI'
 
-const gradeData = [
-  { name: 'Elite', value: 37, color: '#16a34a' },
-  { name: 'Critical', value: 2, color: '#dc2626' },
-  { name: 'Std', value: 4, color: '#d97706' },
-]
-
-const appStatusData = [
-  { name: 'Elite-PQC Ready', value: 45, color: '#16a34a' },
-  { name: 'Standard',         value: 30, color: '#d97706' },
-  { name: 'Legacy',           value: 15, color: '#dc2626' },
-  { name: 'Critical',         value: 10, color: '#7c0000' },
-]
-
-const assets = [
-  { name: 'Digigrihavatika.pnbuat.bank.in', ip: '103.109.225.128', pqc: true  },
-  { name: 'wcw.pnb.bank.in',                ip: '103.109.225.201', pqc: true  },
-  { name: 'Wbbgb.pnbuk.bank.in',            ip: '103.109.224.249', pqc: false },
-  { name: 'portal.pnb.bank.in',             ip: '103.109.225.101', pqc: true  },
-  { name: 'api.pnb.bank.in',                ip: '103.109.225.102', pqc: true  },
-  { name: 'vpn.pnb.bank.in',                ip: '34.55.90.21',     pqc: false },
-]
+// Assets and grades dynamically loaded from PNB
 
 const recommendations = [
   { icon: '⚠', text: 'Upgrade to TLS 1.3 with PQC',       priority: 'High'   },
@@ -37,6 +19,20 @@ const riskHeatmap = [
 ]
 
 export default function PostureOfPQC() {
+  const [data, setData] = useState(null)
+
+  useEffect(() => {
+    dataAPI.getPostureOfPQCData().then(res => {
+      if (res.success) setData(res)
+    })
+  }, [])
+
+  if (!data) {
+    return <div className="p-8 flex items-center justify-center min-h-[400px] text-pnb-crimson font-display font-semibold tracking-wide bg-amber-50/50 rounded-2xl border border-amber-200">Loading PQC Compliance Data...</div>
+  }
+
+  const { gradeData, appStatusData, assets, summary } = data;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -47,13 +43,13 @@ export default function PostureOfPQC() {
         </div>
         {/* Summary strip */}
         <div className="flex items-center gap-4 bg-slate-800 text-white rounded-xl px-5 py-3 font-display text-sm">
-          <span className="text-green-400 font-bold">Elite-PQC Ready: <span className="text-white">45%</span></span>
+          <span className="text-green-400 font-bold">Elite-PQC Ready: <span className="text-white">{summary.pqcReadyPct}%</span></span>
           <span className="text-amber-400">|</span>
-          <span className="text-amber-400 font-bold">Standard: <span className="text-white">30%</span></span>
+          <span className="text-amber-400 font-bold">Standard: <span className="text-white">{summary.stdPct}%</span></span>
           <span className="text-amber-400">|</span>
-          <span className="text-red-400 font-bold">Legacy: <span className="text-white">15%</span></span>
+          <span className="text-red-400 font-bold">Legacy: <span className="text-white">{summary.legacyPct}%</span></span>
           <span className="text-amber-400">|</span>
-          <span className="text-red-300 font-bold">Critical Apps: <span className="text-white">8</span></span>
+          <span className="text-red-300 font-bold">Critical Apps: <span className="text-white">{summary.criticalCount}</span></span>
         </div>
       </div>
 
@@ -68,27 +64,15 @@ export default function PostureOfPQC() {
 
           {/* Bar chart */}
           <div className="flex items-end gap-4 h-36 mb-3">
-            <div className="flex flex-col items-center flex-1">
-              <div className="w-full rounded-t-lg flex items-end justify-center text-white font-display font-bold text-xl pb-2"
-                style={{ height: '85%', background: '#16a34a' }}>
-                37
+            {gradeData.map((g) => (
+              <div key={g.name} className="flex flex-col items-center flex-1">
+                <div className="w-full rounded-t-lg flex items-end justify-center text-white font-display font-bold text-xl pb-2"
+                  style={{ height: `${(g.value / Math.max(1, ...gradeData.map(d=>d.value))) * 100}%`, background: g.color }}>
+                  {g.value}
+                </div>
+                <p className="text-xs font-body text-gray-500 mt-1">{g.name}</p>
               </div>
-              <p className="text-xs font-body text-gray-500 mt-1">Elite</p>
-            </div>
-            <div className="flex flex-col items-center" style={{ width: 60 }}>
-              <div className="w-full rounded-t-lg flex items-end justify-center text-white font-display font-bold text-lg pb-2"
-                style={{ height: '20%', background: '#dc2626' }}>
-                2
-              </div>
-              <p className="text-xs font-body text-gray-500 mt-1">Critical</p>
-            </div>
-            <div className="flex flex-col items-center" style={{ width: 60 }}>
-              <div className="w-full rounded-t-lg flex items-end justify-center text-white font-display font-bold text-lg pb-2"
-                style={{ height: '30%', background: '#d97706' }}>
-                4
-              </div>
-              <p className="text-xs font-body text-gray-500 mt-1">Std</p>
-            </div>
+            ))}
           </div>
         </div>
 
